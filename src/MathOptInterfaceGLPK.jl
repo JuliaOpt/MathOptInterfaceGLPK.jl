@@ -11,6 +11,23 @@ const MOI = MathOptInterface
 using LinQuadOptInterface
 const LQOI = LinQuadOptInterface
 
+# Many functions in this modulo are adapted from GLPKMathProgInterface.jl. This is the copyright notice:
+## Copyright (c) 2013: Carlo Baldassi
+## Permission is hereby granted, free of charge, to any person obtaining a copy
+## of this software and associated documentation files (the "Software"), to deal
+## in the Software without restriction, including without limitation the rights 
+## to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+## copies of the Software, and to permit persons to whom the Software is 
+## furnished to do so, subject to the following conditions:
+## The above copyright notice and this permission notice shall be included in 
+## all copies or substantial portions of the Software.
+## THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+## IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+## FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+## AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+## LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+## OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+## SOFTWARE.
 
 # export GLPKSolver
 abstract type GLPKSolver <: LQOI.LinQuadSolver end
@@ -71,7 +88,7 @@ function MOI.SolverInstance(s::GLPKSolverLP)
         error("This is a bug")
     end
     param.msg_lev = GLPK.MSG_ERR
-    for (k,v) in s.opts
+    for (k,v) in s.options
         i = findfirst(x->x==k, fieldnames(typeof(param)))
         if i > 0
             t = typeof(param).types[i]
@@ -157,6 +174,42 @@ function MOI.SolverInstance(s::GLPKSolverMIP)
     return lpm
 end
 
+
+const SUPPORTED_CONSTRAINTS_LP = [
+    (LQOI.Linear, LQOI.EQ),
+    (LQOI.Linear, LQOI.LE),
+    (LQOI.Linear, LQOI.GE),
+    (LQOI.Linear, LQOI.IV),
+    (LQOI.SinVar, LQOI.EQ),
+    (LQOI.SinVar, LQOI.LE),
+    (LQOI.SinVar, LQOI.GE),
+    (LQOI.SinVar, LQOI.IV),
+    (LQOI.VecVar, MOI.Nonnegatives),
+    (LQOI.VecVar, MOI.Nonpositives),
+    (LQOI.VecVar, MOI.Zeros),
+    (LQOI.VecLin, MOI.Nonnegatives),
+    (LQOI.VecLin, MOI.Nonpositives),
+    (LQOI.VecLin, MOI.Zeros)
+]
+const SUPPORTED_CONSTRAINTS_MIP = vcat(SUPPORTED_CONSTRAINTS_LP, [
+    (LQOI.SinVar, MOI.ZeroOne),
+    (LQOI.SinVar, MOI.Integer),
+    # (VecVar, MOI.SOS1),
+    # (VecVar, MOI.SOS2),
+])
+const SUPPORTED_OBJECTIVES = [
+    LQOI.Linear
+]
+
+LQOI.lqs_supported_constraints(s::GLPKSolverMIP) = SUPPORTED_CONSTRAINTS_MIP
+LQOI.lqs_supported_constraints(s::GLPKSolverMIPInstance) = SUPPORTED_CONSTRAINTS_MIP
+LQOI.lqs_supported_objectives(s::GLPKSolverMIP) = SUPPORTED_OBJECTIVES
+LQOI.lqs_supported_objectives(s::GLPKSolverMIPInstance) = SUPPORTED_OBJECTIVES
+
+LQOI.lqs_supported_constraints(s::GLPKSolverLP) = SUPPORTED_CONSTRAINTS_LP
+LQOI.lqs_supported_constraints(s::GLPKSolverLPInstance) = SUPPORTED_CONSTRAINTS_LP
+LQOI.lqs_supported_objectives(s::GLPKSolverLP) = SUPPORTED_OBJECTIVES
+LQOI.lqs_supported_objectives(s::GLPKSolverLPInstance) = SUPPORTED_OBJECTIVES
 #=
     inner wrapper
 =#
@@ -187,16 +240,17 @@ cintvec(v::Vector) = convert(Vector{Int32}, v)
 cdoublevec(v::Vector) = convert(Vector{Float64}, v)
 
 # LQOI.lqs_chgbds!(m, colvec, valvec, sensevec)
-function LQOI.lqs_chgbds!(m::GLPK.Prob, colvec, valvec, sensevec) 
-    colub = Inf
-    collb = -Inf
-    bt = GLPK.DB
+function LQOI.lqs_chgbds!(instance::GLPKSolverInstance, colvec, valvec, sensevec)
+    m = instance.inner
     for i in eachindex(colvec)
+        colub = Inf
+        collb = -Inf
+        bt = GLPK.DB
         if sensevec[i] == Cchar('E')
             colub = valvec[i]
             collb = valvec[i]
             bt = GLPK.FX
-        elseif sensevec[i] == Cchar('G')
+        elseif sensevec[i] == Cchar('L')
             collb = valvec[i]
             colub = Inf
             u = GLPK.get_col_ub(m, colvec[i])
@@ -206,7 +260,7 @@ function LQOI.lqs_chgbds!(m::GLPK.Prob, colvec, valvec, sensevec)
             else
                 bt = GLPK.LO
             end
-        elseif sensevec[i] == Cchar('L')
+        elseif sensevec[i] == Cchar('U')
             colub = valvec[i]
             collb = -Inf
             l = GLPK.get_col_lb(m, colvec[i])
@@ -221,6 +275,8 @@ function LQOI.lqs_chgbds!(m::GLPK.Prob, colvec, valvec, sensevec)
         end
         if colub == Inf && collb == -Inf
             bt = GLPK.FR
+        elseif colub == collb
+            bt = GLPK.FX
         end
         GLPK.set_col_bnds(m, colvec[i], bt, collb, colub)
     end 
@@ -229,42 +285,33 @@ end
 
 
 # LQOI.lqs_getlb(m, col)
-LQOI.lqs_getlb(m::GLPK.Prob, col) = GLPK.get_col_lb(m, col)
+LQOI.lqs_getlb(instance::GLPKSolverInstance, col) = GLPK.get_col_lb(instance.inner, col)
 
 # LQOI.lqs_getub(m, col)
-LQOI.lqs_getub(m::GLPK.Prob, col) = GLPK.get_col_ub(m, col)
+LQOI.lqs_getub(instance::GLPKSolverInstance, col) = GLPK.get_col_ub(instance.inner, col)
 
 # LQOI.lqs_getnumrows(m)
-LQOI.lqs_getnumrows(m::GLPK.Prob) = GLPK.get_num_rows(m)
+LQOI.lqs_getnumrows(instance::GLPKSolverInstance) = GLPK.get_num_rows(instance.inner)
 
 # LQOI.lqs_addrows!(m, rowvec, colvec, coefvec, sensevec, rhsvec)
-function LQOI.lqs_addrows!(m::GLPK.Prob, rowvec, colvec, coefvec, sensevec, rhsvec) 
-    
+function LQOI.lqs_addrows!(instance::GLPKSolverInstance, rowvec, colvec, coefvec, sensevec, rhsvec) 
+    m = instance.inner
+
     nrows = length(rhsvec)
 
     if nrows <= 0
         error("nor row to be added")
     elseif nrows == 1
-        addrow!(m::GLPK.Prob, colvec::Vector, coefvec::Vector, sensevec[1], rhsvec[1])
+        addrow!(m, colvec::Vector, coefvec::Vector, sensevec[1], rhsvec[1])
 
     else
 
-        colidx = [Int[] for i in 1:nrows]
-        colval = [Float64[] for i in 1:nrows]
+        push!(rowvec, length(colvec)+1)
 
-        for i in 1:nrows
-            nels = count(x->x==i, rowvec)
-            sizehint!(colidx, nels)
-            sizehint!(colval, nels)
-        end
-
-        for i in eachindex(rowvec)
-            push!(colidx[rowvec[i]], colvec[i])
-            push!(colval[rowvec[i]], coefvec[i])
-        end
-
-        for i in 1:nrows
-            addrow!(lp::GLPK.Prob, colidx[i], colval[i]::Vector, sense[i]::Cchar, rhs[i]::Real)
+        for i in 1:(length(rowvec)-1)
+            inds = colvec[rowvec[i]:rowvec[i+1]-1]
+            coefs = coefvec[rowvec[i]:rowvec[i+1]-1]
+            addrow!(m, inds, coefs, sensevec[i], rhsvec[i])
         end
         
     end
@@ -290,17 +337,50 @@ function addrow!(lp::GLPK.Prob, colidx::Vector, colcoef::Vector, sense::Cchar, r
         bt = GLPK.UP
         rowlb = -Inf
         rowub = rhs
+    elseif sense == Cchar('R')
+        # start with lower
+        bt = GLPK.DB
+        rowlb = rhs
+        rowub = Inf
     else
-        error("row type not valid")
+        error("row type $(sense) not valid")
         bt = GLPK.FR
     end
     GLPK.set_row_bnds(lp, m, bt, rowlb, rowub)
     return
 end
 
+function setrhs(instance::GLPKSolverInstance, idx::Integer, rhs::Real)
+    lp = instance.inner
 
+    l = GLPK.get_row_lb(lp, idx)
+    u = GLPK.get_row_ub(lp, idx)
+
+    if l == u
+        bt = GLPK.FX
+        rowlb = rhs
+        rowub = rhs
+    elseif l < Inf && u < Inf
+        bt = GLPK.FX
+        rowlb = rhs
+        rowub = rhs
+    elseif l < Inf
+        bt = GLPK.LO
+        rowlb = rhs
+        ruwub = Inf
+    elseif u < Inf
+        bt = GLPK.UP
+        rowlb = -Inf
+        ruwub = rhs
+    else
+        error("not valid rhs")
+    end
+
+    GLPK.set_row_bnds(lp, idx, bt, rowlb, rowub)
+end
 # LQOI.lqs_getrhs(m, rowvec)
-function LQOI.lqs_getrhs(m::GLPK.Prob, row)
+function LQOI.lqs_getrhs(instance::GLPKSolverInstance, row)
+    m = instance.inner
     sense = GLPK.get_row_type(m, row)
     if sense == GLPK.LO
         return GLPK.get_row_lb(m, row)
@@ -314,14 +394,16 @@ function LQOI.lqs_getrhs(m::GLPK.Prob, row)
 end
 # colvec, coef = LQOI.lqs_getrows(m, rowvec)
 # TODO improve
-function LQOI.lqs_getrows(lp::GLPK.Prob, idx)
+function LQOI.lqs_getrows(instance::GLPKSolverInstance, idx)
+    lp = instance.inner
     colidx, coefs = GLPK.get_mat_row(lp, idx)
     return colidx-1, coefs
 end
 
 # LQOI.lqs_getcoef(m, row, col) #??
 # TODO improve
-function LQOI.lqs_getcoef(m::GLPK.Prob, row, col)
+function LQOI.lqs_getcoef(instance::GLPKSolverInstance, row, col)
+    lp = instance.inner
     colidx, coefs = GLPK.get_mat_row(lp, row)
     idx = findfirst(colidx, col)
     if idx > 0
@@ -332,33 +414,75 @@ function LQOI.lqs_getcoef(m::GLPK.Prob, row, col)
 end
 
 # LQOI.lqs_chgcoef!(m, row, col, coef)
-# TODO SPLIT THIS ONE
-LQOI.lqs_chgcoef!(m::GLPK.Prob, row, col, coef)  = error("cant set singe coeff please reset full line/column")
+function LQOI.lqs_chgcoef!(instance::GLPKSolverInstance, row, col, coef)
+    if row == 0 
+        lp = instance.inner
+        GLPK.set_obj_coef(lp, col, coef)
+    elseif col == 0
+        setrhs(instance, row, coef)
+    else
+        chgmatcoef!(instance, row, col, coef)
+    end
+    return nothing
+end
 
+function chgmatcoef!(instance::GLPKSolverInstance, row, col, coef)
+    lp = instance.inner
+    colidx, coefs = GLPK.get_mat_row(lp, row)
+    idx = findfirst(colidx, col)
+    if idx > 0
+        coefs[idx] = coef
+    else
+        push!(colidx, col)
+        push!(coefs, coef)
+    end  
+    GLPK.set_mat_row(lp, row, colidx, coefs)
+    return nothing
+end
 # LQOI.lqs_delrows!(m, row, row)
-function LQOI.lqs_delrows!(m::GLPK.Prob, rowbeg, rowend)
+function LQOI.lqs_delrows!(instance::GLPKSolverInstance, rowbeg, rowend)
+
+    m = instance.inner
 
     idx = collect(rowbeg:rowend)
 
-    GLPK.std_basis(m.inner)
-    GLPK.del_rows(m.inner, length(idx), idx)
+    GLPK.std_basis(m)
+    GLPK.del_rows(m, length(idx), idx)
 
     nothing
 end
 # LQOI.lqs_chgctype!(m, colvec, typevec)
 # TODO fix types
-LQOI.lqs_chgctype!(m::GLPK.Prob, colvec, typevec) = error("changing coltype disabled")
+function LQOI.lqs_chgctype!(instance::GLPKSolverInstance, colvec, vartype)
 
+    lp = instance.inner
+    coltype = GLPK.CV
+    for i in eachindex(colvec)
+        if vartype[i] == Cint('I')
+            coltype = GLPK.IV
+        elseif vartype[i] == Cint('C')
+            coltype = GLPK.CV
+        elseif vartype[i] == Cint('B')
+            coltype = GLPK.IV
+            GLPK.set_col_bnds(lp, colvec[i], GLPK.DB, 0.0, 1.0)
+        else
+            error("invalid variable type: $(vartype[i])")
+        end
+        GLPK.set_col_kind(lp, colvec[i], coltype)
+    end
+
+end
 # LQOI.lqs_chgsense!(m, rowvec, sensevec)
 # TODO fix types
-function LQOI.lqs_chgsense!(m::GLPK.Prob, rowvec, sensevec)
+function LQOI.lqs_chgsense!(instance::GLPKSolverInstance, rowvec, sensevec)
     for i in eachindex(rowvec)
-        changesense!(m::GLPK.Prob, rowvec[i], sensevec[i])
+        changesense!(instance, rowvec[i], sensevec[i])
     end
     nothing
 end
-function changesense!(m::GLPK.Prob, row, sense)
-    oldsense = get_row_type(m, row)
+function changesense!(instance::GLPKSolverInstance, row, sense)
+    m = instance.inner
+    oldsense = GLPK.get_row_type(m, row)
     newsense = translatesense(sense)
     if oldsense == newsense
         return nothing
@@ -410,9 +534,9 @@ const VAR_TYPE_MAP = Dict{Symbol,Cchar}(
 LQOI.lqs_vartype_map(m::GLPKSolverInstance) = VAR_TYPE_MAP
 
 # LQOI.lqs_addsos(m, colvec, valvec, typ)
-LQOI.lqs_addsos!(m::GLPK.Prob, colvec, valvec, typ) = GLPK.add_sos!(m::GLPK.Prob, typ, colvec, valvec)
+LQOI.lqs_addsos!(instance::GLPKSolverInstance, colvec, valvec, typ) = GLPK.add_sos!(instance.inner, typ, colvec, valvec)
 # LQOI.lqs_delsos(m, idx, idx)
-LQOI.lqs_delsos!(m::GLPK.Prob, idx1, idx2) = GLPK.cpx_delsos!(m::GLPK.Prob, idx1, idx2)
+LQOI.lqs_delsos!(instance::GLPKSolverInstance, idx1, idx2) = error("cant del SOS")
 
 const SOS_TYPE_MAP = Dict{Symbol,Symbol}(
     :SOS1 => :SOS1,#Cchar('1'),
@@ -422,24 +546,30 @@ LQOI.lqs_sertype_map(m::GLPKSolverInstance) = SOS_TYPE_MAP
 
 # LQOI.lqs_getsos(m, idx)
 # TODO improve getting processes
-function LQOI.lqs_getsos(m::GLPK.Prob, idx)
-    indices, weights, types = GLPK.cpx_getsos(m::GLPK.Prob, idx)
+function LQOI.lqs_getsos(instance::GLPKSolverInstance, idx)
+    indices, weights, types = GLPK.getsos(instance.inner, idx)
 
     return indices, weights, types == Cchar('1') ? :SOS1 : :SOS2
 end
 # LQOI.lqs_getnumqconstrs(m)
-LQOI.lqs_getnumqconstrs(m::GLPK.Prob) = error("GLPK does not support quadratic ocnstraints")
+LQOI.lqs_getnumqconstrs(instance::GLPKSolverInstance) = error("GLPK does not support quadratic ocnstraints")
 
 # LQOI.lqs_addqconstr(m, cols,coefs,rhs,sense, I,J,V)
-LQOI.lqs_addqconstr!(m::GLPK.Prob, cols,coefs,rhs,sense, I,J,V) = error("GLPK does not support quadratic ocnstraints")
+LQOI.lqs_addqconstr!(instance::GLPKSolverInstance, cols,coefs,rhs,sense, I,J,V) = error("GLPK does not support quadratic ocnstraints")
 
 # LQOI.lqs_chgrngval
-LQOI.lqs_chgrngval!(m::GLPK.Prob, rows, vals) = GLPK.cpx_chgrngval!(m::GLPK.Prob, rows, vals)
-
+function LQOI.lqs_chgrngval!(instance::GLPKSolverInstance, rows, vals)
+    lp = instance.inner
+    for i in eachindex(rows)
+        l = GLPK.get_row_lb(lp, rows[i])
+        GLPK.set_row_bnds(lp, rows[i], GLPK.DB, l, l+vals[i])
+    end
+    nothing
+end
 const CTR_TYPE_MAP = Dict{Symbol,Cchar}(
     :RANGE => Cchar('R'),
-    :LOWER => Cchar('L'),
-    :UPPER => Cchar('U'),
+    :LOWER => Cchar('G'),
+    :UPPER => Cchar('L'),
     :EQUALITY => Cchar('E')
 )
 LQOI.lqs_ctrtype_map(m::GLPKSolverInstance) = CTR_TYPE_MAP
@@ -449,10 +579,11 @@ LQOI.lqs_ctrtype_map(m::GLPKSolverInstance) = CTR_TYPE_MAP
 =#
 
 # LQOI.lqs_copyquad(m, intvec,intvec, floatvec) #?
-LQOI.lqs_copyquad!(m::GLPK.Prob, I, J, V) = error("GLPK does no support quadratics")
+LQOI.lqs_copyquad!(instance::GLPKSolverInstance, I, J, V) = error("GLPK does no support quadratics")
 
 # LQOI.lqs_chgobj(m, colvec,coefvec)
-function LQOI.lqs_chgobj!(m::GLPK.Prob, colvec, coefvec)
+function LQOI.lqs_chgobj!(instance::GLPKSolverInstance, colvec, coefvec)
+    m = instance.inner
     for i in eachindex(colvec)
         GLPK.set_obj_coef(m, colvec[i], coefvec[i])
     end
@@ -461,7 +592,8 @@ end
 
 # LQOI.lqs_chgobjsen(m, symbol)
 # TODO improve min max names
-function LQOI.lqs_chgobjsen!(m::GLPK.Prob, sense) 
+function LQOI.lqs_chgobjsen!(instance::GLPKSolverInstance, sense) 
+    m = instance.inner
     if sense == :Min
         GLPK.set_obj_dir(m, GLPK.MIN)
     elseif sense == :Max
@@ -471,7 +603,8 @@ function LQOI.lqs_chgobjsen!(m::GLPK.Prob, sense)
     end
 end
 # LQOI.lqs_getobj(m)
-function LQOI.lqs_getobj(m::GLPK.Prob)
+function LQOI.lqs_getobj(instance::GLPKSolverInstance)
+    m = instance.inner
     n = GLPK.get_num_cols(m)
     obj = Array{Float64}(n)
     for c = 1:n
@@ -482,9 +615,9 @@ function LQOI.lqs_getobj(m::GLPK.Prob)
 end
 
 # lqs_getobjsen(m)
-function LQOI.lqs_getobjsen(m::GLPK.Prob)
+function LQOI.lqs_getobjsen(instance::GLPKSolverInstance)
 
-    s = GLPK.get_obj_dir(m)
+    s = GLPK.get_obj_dir(instance.inner)
     if s == GLPK.MIN
         return MOI.MinSense
     elseif s == GLPK.MAX
@@ -500,158 +633,303 @@ end
 =#
 
 # LQOI.lqs_getnumcols(m)
-LQOI.lqs_getnumcols(m::GLPK.Prob) = GLPK.get_num_cols(m::GLPK.Prob)
+LQOI.lqs_getnumcols(instance::GLPKSolverInstance) = GLPK.get_num_cols(instance.inner)
 
 # LQOI.lqs_newcols!(m, int)
-LQOI.lqs_newcols!(m::GLPK.Prob, int) = GLPK.add_cols(m::GLPK.Prob, int)
+function LQOI.lqs_newcols!(instance::GLPKSolverInstance, int)
+    n = GLPK.get_num_cols(instance.inner)
+    GLPK.add_cols(instance.inner, int)
+    for i in 1:int
+        GLPK.set_col_bnds(instance.inner, n+i, GLPK.FR, -Inf, Inf)
+    end
+    nothing
+end
 
 # LQOI.lqs_delcols!(m, col, col)
-function LQOI.lqs_delcols!(m::GLPK.Prob, col, col2)
+function LQOI.lqs_delcols!(instance::GLPKSolverInstance, col, col2)
     idx = collect(col:col2)
-    GLPK.std_basis(m)
-    GLPK.del_cols(m, length(idx), idx)
+    GLPK.std_basis(instance.inner)
+    GLPK.del_cols(instance.inner, length(idx), idx)
 end
 
 # LQOI.lqs_addmipstarts(m, colvec, valvec)
-LQOI.lqs_addmipstarts!(m::GLPK.Prob, colvec, valvec) = GLPK.cpx_addmipstarts!(m::GLPK.Prob, colvec, valvec) 
-
+LQOI.lqs_addmipstarts!(instance::GLPKSolverInstance, colvec, valvec) = nothing
 #=
     Solve
 =#
 
 # LQOI.lqs_mipopt!(m)
-LQOI.lqs_mipopt!(m::GLPK.Prob) = GLPK.cpx_mipopt!(m::GLPK.Prob)
+LQOI.lqs_mipopt!(instance::GLPKSolverInstance) = opt!(instance)
 
 # LQOI.lqs_qpopt!(m)
-LQOI.lqs_qpopt!(m::GLPK.Prob) = GLPK.cpx_qpopt!(m::GLPK.Prob)
+LQOI.lqs_qpopt!(instance::GLPKSolverInstance) = error("Quadratic solving not supported")
 
 # LQOI.lqs_lpopt!(m)
-LQOI.lqs_lpopt!(m::GLPK.Prob) = GLPK.cpx_lpopt!(m::GLPK.Prob)
+LQOI.lqs_lpopt!(instance::GLPKSolverInstance) = opt!(instance)
 
 
 const TERMINATION_STATUS_MAP = Dict(
 )
 
 # LQOI.lqs_terminationstatus(m)
-function LQOI.lqs_terminationstatus(model::GLPKSolverInstance)
-    m = model.inner 
+function LQOI.lqs_terminationstatus(model::GLPKSolverMIPInstance)
 
-    code = GLPK.cpx_getstat(m)
-    mthd, soltype, prifeas, dualfeas = GLPK.cpx_solninfo(m)
-
-    
-    if haskey(TERMINATION_STATUS_MAP, code)
-        out = TERMINATION_STATUS_MAP[code]
-        
-        if code == GLPK.CPX_STAT_UNBOUNDED && prifeas > 0
-            out = MOI.Success
-        elseif code == GLPK.CPX_STAT_INFEASIBLE && dualfeas > 0
-            out = MOI.Success
+    if model.userlimit
+        return MOI.OtherLimit
+    end
+    s = GLPK.mip_status(model.inner)
+    if s == GLPK.UNDEF
+        if model.param.presolve == GLPK.OFF && GLPK.get_status(model.inner) == GLPK.NOFEAS
+            return MOI.InfeasibleNoResult
+        else
+            return MOI.OtherError
         end
-        return out
+    end
+    if s == GLPK.OPT
+        return MOI.Success
+    elseif s == GLPK.INFEAS
+        return MOI.InfeasibleNoResult
+    elseif s == GLPK.UNBND
+        return MOI.UnboundedNoResult
+    elseif s == GLPK.FEAS
+        return MOI.SlowProgress
+    elseif s == GLPK.NOFEAS
+        return MOI.OtherError
+    elseif s == GLPK.UNDEF
+        return MOI.OtherError
     else
-        error("Status $(code) has not been mapped to a MOI termination status.")
+        error("internal library error")
+    end
+end
+function LQOI.lqs_terminationstatus(model::GLPKSolverLPInstance)
+    s = lp_status(model)
+    if s == GLPK.OPT
+        return MOI.Success
+    elseif s == GLPK.INFEAS
+        return MOI.InfeasibleNoResult
+    elseif s == GLPK.UNBND
+        return OI.UnboundedNoResult
+    elseif s == GLPK.FEAS
+        return MOI.SlowProgress
+    elseif s == GLPK.NOFEAS
+        return MOI.OtherError
+    elseif s == GLPK.UNDEF
+        return MOI.OtherError
+    else
+        error("Internal library error")
     end
 end
 
-function LQOI.lqs_primalstatus(model::GLPKSolverInstance)
+function lp_status(lpm::GLPKSolverLPInstance)
+    if lpm.method == :Simplex || lpm.method == :Exact
+        get_status = GLPK.get_status
+    elseif lpm.method == :InteriorPoint
+        get_status = GLPK.ipt_status
+    else
+        error("bug")
+    end
+
+    s = get_status(lpm.inner)
+end
+
+function LQOI.lqs_primalstatus(model::GLPKSolverMIPInstance)
     m = model.inner
 
-    code = GLPK.cpx_getstat(m)
-    mthd, soltype, prifeas, dualfeas = GLPK.cpx_solninfo(m)
+    s = GLPK.mip_status(model.inner)
 
     out = MOI.UnknownResultStatus
 
-    if soltype in [GLPK.CPX_NONBASIC_SOLN, GLPK.CPX_BASIC_SOLN, GLPK.CPX_PRIMAL_SOLN]
-        if prifeas > 0
-            out = MOI.FeasiblePoint
-        else
-            out = MOI.InfeasiblePoint
-        end
-    end
-    if code == GLPK.CPX_STAT_UNBOUNDED #&& prifeas > 0
-        out = MOI.InfeasibilityCertificate
+    if s in [GLPK.OPT, GLPK.FEAS]
+        out = MOI.FeasiblePoint
     end
     return out
 end
-function LQOI.lqs_dualstatus(model::GLPKSolverInstance)
-    m = model.inner    
+function LQOI.lqs_primalstatus(model::GLPKSolverLPInstance)
+    m = model.inner
 
-    code = GLPK.cpx_getstat(m)
-    mthd, soltype, prifeas, dualfeas = GLPK.cpx_solninfo(m)
-    if !LQOI.hasinteger(model)
-        if soltype in [GLPK.CPX_NONBASIC_SOLN, GLPK.CPX_BASIC_SOLN]
-            if dualfeas > 0
-                out = MOI.FeasiblePoint
-            else
-                out = MOI.InfeasiblePoint
-            end
-        else
-            out = MOI.UnknownResultStatus
-        end
-        if code == GLPK.CPX_STAT_INFEASIBLE && dualfeas > 0
-            out = MOI.InfeasibilityCertificate
-        end
-        return out
+    s = lp_status(model)
+
+    out = MOI.UnknownResultStatus
+
+    if s in [GLPK.OPT, GLPK.FEAS]
+        out = MOI.FeasiblePoint
     end
+    return out
+end
+function LQOI.lqs_dualstatus(model::GLPKSolverMIPInstance)
     return MOI.UnknownResultStatus
+end
+function LQOI.lqs_dualstatus(model::GLPKSolverLPInstance)
+    m = model.inner
+    
+    s = lp_status(model)
+
+    out = MOI.UnknownResultStatus
+
+    if s in [GLPK.OPT]#, GLPK.FEAS]
+        out = MOI.FeasiblePoint
+    end
+    return out
 end
 
 
 # LQOI.lqs_getx!(m, place)
-LQOI.lqs_getx!(m::GLPK.Prob, place) = GLPK.cpx_getx!(m::GLPK.Prob, place) 
+function LQOI.lqs_getx!(instance::GLPKSolverMIPInstance, place)
+    lp = instance.inner
+    for c in eachindex(place)
+        place[c] = GLPK.mip_col_val(lp, c)
+    end
+end
+function LQOI.lqs_getx!(lpm::GLPKSolverLPInstance, place)
+    lp = lpm.inner
+
+    if lpm.method == :Simplex || lpm.method == :Exact
+        get_col_prim = GLPK.get_col_prim
+    elseif lpm.method == :InteriorPoint
+        get_col_prim = GLPK.ipt_col_prim
+    else
+        error("bug")
+    end
+
+    for c in eachindex(place)
+        place[c] = get_col_prim(lp, c)
+    end
+    return nothing
+end
 
 # LQOI.lqs_getax!(m, place)
-LQOI.lqs_getax!(m::GLPK.Prob, place) = GLPK.cpx_getax!(m::GLPK.Prob, place)
+function LQOI.lqs_getax!(instance::GLPKSolverMIPInstance, place)
+    lp = instance.inner
+    for c in eachindex(place)
+        place[c] = GLPK.mip_row_val(lp, c)
+    end
+end
+function LQOI.lqs_getax!(lpm::GLPKSolverLPInstance, place)
+    lp = lpm.inner
+
+    if lpm.method == :Simplex || lpm.method == :Exact
+        get_row_prim = GLPK.get_row_prim
+    elseif lpm.method == :InteriorPoint
+        get_row_prim = GLPK.ipt_row_prim
+    else
+        error("bug")
+    end
+
+    for r in eachindex(place)
+        place[r] = get_row_prim(lp, r)
+    end
+    return nothing
+end
 
 # LQOI.lqs_getdj!(m, place)
-LQOI.lqs_getdj!(m::GLPK.Prob, place) = GLPK.cpx_getdj!(m::GLPK.Prob, place)
+# no-op
+function LQOI.lqs_getdj!(instance::GLPKSolverMIPInstance, place) end
+
+function LQOI.lqs_getdj!(lpm::GLPKSolverLPInstance, place)
+    lp = lpm.inner
+
+    if lpm.method == :Simplex || lpm.method == :Exact
+        get_col_dual = GLPK.get_col_dual
+    elseif lpm.method == :InteriorPoint
+        get_col_dual = GLPK.ipt_col_dual
+    else
+        error("bug")
+    end
+
+    for c in eachindex(place)
+        place[c] = get_col_dual(lp, c)
+    end
+    return nothing
+end
 
 # LQOI.lqs_getpi!(m, place)
-LQOI.lqs_getpi!(m::GLPK.Prob, place) = GLPK.cpx_getpi!(m::GLPK.Prob, place)
+#no-op
+function LQOI.lqs_getpi!(instance::GLPKSolverMIPInstance, place) end
+function LQOI.lqs_getpi!(lpm::GLPKSolverLPInstance, place)
+    lp = lpm.inner
+
+    if lpm.method == :Simplex || lpm.method == :Exact
+        get_row_dual = GLPK.get_row_dual
+    elseif lpm.method == :InteriorPoint
+        get_row_dual = GLPK.ipt_row_dual
+    else
+        error("bug")
+    end
+
+    for r in eachindex(place)
+        place[r] = get_row_dual(lp, r)
+    end
+    return nothing
+end
 
 # LQOI.lqs_getobjval(m)
-LQOI.lqs_getobjval(m::GLPK.Prob) = GLPK.cpx_getobjval(m::GLPK.Prob)
+LQOI.lqs_getobjval(instance::GLPKSolverMIPInstance) = GLPK.mip_obj_val(instance.inner)
+
+function LQOI.lqs_getobjval(lpm::GLPKSolverLPInstance)
+    if lpm.method == :Simplex || lpm.method == :Exact
+        get_obj_val = GLPK.get_obj_val
+    elseif lpm.method == :InteriorPoint
+        get_obj_val = GLPK.ipt_obj_val
+    else
+        error("bug")
+    end
+    return get_obj_val(lpm.inner)
+end
 
 # LQOI.lqs_getbestobjval(m)
-LQOI.lqs_getbestobjval(m::GLPK.Prob) = GLPK.cpx_getbestobjval(m::GLPK.Prob)
+LQOI.lqs_getbestobjval(instance::GLPKSolverMIPInstance) = instance.objbound
 
 # LQOI.lqs_getmiprelgap(m)
-LQOI.lqs_getmiprelgap(m::GLPK.Prob) = GLPK.cpx_getmiprelgap(m::GLPK.Prob)
+LQOI.lqs_getmiprelgap(instance::GLPKSolverInstance) = abs(GLPK.mip_obj_val(instance.inner)-instance.objbound)/(1e-9+GLPK.mip_obj_val(instance.inner))
 
 # LQOI.lqs_getitcnt(m)
-LQOI.lqs_getitcnt(m::GLPK.Prob)  = GLPK.cpx_getitcnt(m::GLPK.Prob)
+LQOI.lqs_getitcnt(instance::GLPKSolverInstance)  = -1
 
 # LQOI.lqs_getbaritcnt(m)
-LQOI.lqs_getbaritcnt(m::GLPK.Prob) = GLPK.cpx_getbaritcnt(m::GLPK.Prob)
+LQOI.lqs_getbaritcnt(instance::GLPKSolverInstance) = -1
 
 # LQOI.lqs_getnodecnt(m)
-LQOI.lqs_getnodecnt(m::GLPK.Prob) = GLPK.cpx_getnodecnt(m::GLPK.Prob)
+LQOI.lqs_getnodecnt(instance::GLPKSolverInstance) = -1
 
 # LQOI.lqs_dualfarkas(m, place)
-LQOI.lqs_dualfarkas!(m::GLPK.Prob, place) = GLPK.cpx_dualfarkas!(m::GLPK.Prob, place)
+LQOI.lqs_dualfarkas!(instance::GLPKSolverInstance, place) = getinfeasibilityray(instance, place)
 
 # LQOI.lqs_getray(m, place)
-LQOI.lqs_getray!(m::GLPK.Prob, place) = GLPK.cpx_getray!(m::GLPK.Prob, place)
+LQOI.lqs_getray!(instance::GLPKSolverInstance, place) = getunboundedray(instance, place)
 
-
-MOI.free!(m::GLPKSolverInstance) = GLPK.free_model(m.inner)
+#no-op
+function MOI.free!(instance::GLPKSolverInstance) end
 
 """
     writeproblem(m::AbstractSolverInstance, filename::String)
 Writes the current problem data to the given file.
 Supported file types are solver-dependent.
 """
-writeproblem(m::GLPKSolverInstance, filename::String, flags::String="") = GLPK.write_model(m.inner, filename)
+writeproblem(instance::GLPKSolverInstance, filename::String, flags::String="") = GLPK.write_model(instance.inner, filename)
 
 
-LQOI.lqs_make_problem_type_continuous(m::GLPK.Prob) = GLPK._make_problem_type_continuous(m)
+LQOI.lqs_make_problem_type_continuous(instance::GLPKSolverInstance) = GLPK._make_problem_type_continuous(instance.inner)
 
 
 #=
     old helpers
 =#
-function optimize!(lpm::GLPKSolverMIPInstance)
+function opt!(lpm::GLPKSolverLPInstance)
+    write_lp(lpm.inner, "model.lp")
+    if lpm.method == :Simplex
+        solve = GLPK.simplex
+    elseif lpm.method == :Exact
+        solve = GLPK.exact
+    elseif lpm.method == :InteriorPoint
+        solve = GLPK.interior
+    else
+        error("bug")
+    end
+    return solve(lpm.inner, lpm.param)
+end
+
+function opt!(lpm::GLPKSolverMIPInstance)
+    write_lp(lpm.inner, "model.lp")
     vartype = getvartype(lpm)
     lb = getvarLB(lpm)
     ub = getvarUB(lpm)
@@ -682,7 +960,7 @@ end
 function getvarLB(lpm::GLPKSolverInstance)
     lp = lpm.inner
     n = GLPK.get_num_cols(lp)
-    lb = Array(Float64, n)
+    lb = Array{Float64}(n)
     for c = 1:n
         l = GLPK.get_col_lb(lp, c)
         if l <= -realmax(Float64)
@@ -728,7 +1006,7 @@ end
 function getvarUB(lpm::GLPKSolverInstance)
     lp = lpm.inner
     n = GLPK.get_num_cols(lp)
-    ub = Array(Float64, n)
+    ub = Array{Float64}(n)
     for c = 1:n
         u = GLPK.get_col_ub(lp, c)
         if u >= realmax(Float64)
@@ -771,6 +1049,168 @@ function setvarUB!(lpm::GLPKSolverInstance, colub)
     end
 end
 
+const vartype_map = Dict(
+    GLPK.CV => :Cont,
+    GLPK.IV => :Int,
+    GLPK.BV => :Bin
+)
+
+function getvartype(lpm::GLPKSolverInstance)
+    lp = lpm.inner
+    ncol = GLPK.get_num_cols(lp)
+    coltype = Array{Symbol}(ncol)
+    for i in 1:ncol
+        ct = GLPK.get_col_kind(lp, i)
+        coltype[i] = vartype_map[ct]
+        if i in lpm.binaries
+            coltype[i] = :Bin
+        elseif coltype[i] == :Bin # GLPK said it was binary, but we didn't tell it
+            coltype[i] = :Int
+        end
+    end
+    return coltype
+end
+nonnull(x) = (x != nothing && !isempty(x))
+
+# The functions getinfeasibilityray and getunboundedray are adapted from code
+# taken from the LEMON C++ optimization library. This is the copyright notice:
+#
+### Copyright (C) 2003-2010
+### Egervary Jeno Kombinatorikus Optimalizalasi Kutatocsoport
+### (Egervary Research Group on Combinatorial Optimization, EGRES).
+###
+### Permission to use, modify and distribute this software is granted
+### provided that this copyright notice appears in all copies. For
+### precise terms see the accompanying LICENSE file.
+###
+### This software is provided "AS IS" with no warranty of any kind,
+### express or implied, and with no claim as to its suitability for any
+### purpose.
+
+function getinfeasibilityray(lpm::GLPKSolverLPInstance, ray)
+    lp = lpm.inner
+
+    if lpm.method == :Simplex || lpm.method == :Exact
+    elseif lpm.method == :InteriorPoint
+        error("getinfeasibilityray is not available when using the InteriorPoint method")
+    else
+        error("bug")
+    end
+
+    m = GLPK.get_num_rows(lp)
+
+    # ray = zeros(m)
+    @assert length(ray) == m
+
+    ur = GLPK.get_unbnd_ray(lp)
+    if ur != 0
+        if ur <= m
+            k = ur
+            get_stat = GLPK.get_row_stat
+            get_bind = GLPK.get_row_bind
+            get_prim = GLPK.get_row_prim
+            get_ub = GLPK.get_row_ub
+        else
+            k = ur - m
+            get_stat = GLPK.get_col_stat
+            get_bind = GLPK.get_col_bind
+            get_prim = GLPK.get_col_prim
+            get_ub = GLPK.get_col_ub
+        end
+
+        get_stat(lp, k) == GLPK.BS || error("unbounded ray is primal (use getunboundedray)")
+
+        ray[get_bind(lp, k)] = (get_prim(lp, k) > get_ub(lp, k)) ? -1 : 1
+
+        GLPK.btran(lp, ray)
+    else
+        eps = 1e-7
+        for i = 1:m
+            idx = GLPK.get_bhead(lp, i)
+            if idx <= m
+                k = idx
+                get_prim = GLPK.get_row_prim
+                get_ub = GLPK.get_row_ub
+                get_lb = GLPK.get_row_lb
+            else
+                k = idx - m
+                get_prim = GLPK.get_col_prim
+                get_ub = GLPK.get_col_ub
+                get_lb = GLPK.get_col_lb
+            end
+
+            res = get_prim(lp, k)
+            if res > get_ub(lp, k) + eps
+                ray[i] = -1
+            elseif res < get_lb(lp, k) - eps
+                ray[i] = 1
+            else
+                continue # ray[i] == 0
+            end
+
+            if idx <= m
+                ray[i] *= GLPK.get_rii(lp, k)
+            else
+                ray[i] /= GLPK.get_sjj(lp, k)
+            end
+        end
+
+        GLPK.btran(lp, ray)
+
+        for i = 1:m
+            ray[i] /= GLPK.get_rii(lp, i)
+        end
+    end
+
+    return nothing
+end
+
+function getunboundedray(lpm::GLPKSolverLPInstance, ray)
+    lp = lpm.inner
+
+    if lpm.method == :Simplex || lpm.method == :Exact
+    elseif lpm.method == :InteriorPoint
+        error("getunboundedray is not available when using the InteriorPoint method")
+    else
+        error("bug")
+    end
+
+    m = GLPK.get_num_rows(lp)
+    n = GLPK.get_num_cols(lp)
+
+    # ray = zeros(n)
+    @assert length(ray) == n
+
+    ur = GLPK.get_unbnd_ray(lp)
+    if ur != 0
+        if ur <= m
+            k = ur
+            get_stat = GLPK.get_row_stat
+            get_dual = GLPK.get_row_dual
+        else
+            k = ur - m
+            get_stat = GLPK.get_col_stat
+            get_dual = GLPK.get_col_dual
+            ray[k] = 1
+        end
+
+        get_stat(lp, k) != GLPK.BS || error("unbounded ray is dual (use getinfeasibilityray)")
+
+        for (ri, rv) in zip(GLPK.eval_tab_col(lp, ur)...)
+            ri > m && (ray[ri - m] = rv)
+        end
+
+        if (GLPK.get_obj_dir(lp) == GLPK.MAX) $ (get_dual(lp, k) > 0)
+            scale!(ray, -1.0)
+        end
+    else
+        for i = 1:n
+            ray[i] = GLPK.get_col_prim(lp, i)
+        end
+    end
+
+    return nothing
+end
 
 
 

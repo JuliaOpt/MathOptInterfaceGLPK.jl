@@ -2,30 +2,29 @@ using GLPK, Base.Test, MathOptInterface, MathOptInterfaceGLPK
 include(joinpath(Pkg.dir("MathOptInterface"), "test", "contlinear.jl"))
 include(joinpath(Pkg.dir("MathOptInterface"), "test", "intlinear.jl"))
 include(joinpath(Pkg.dir("MathOptInterface"), "test", "contconic.jl"))
-# include(joinpath(Pkg.dir("MathOptInterface"), "test", "contquadratic.jl"))
 
 
 # contlinear
-linear1test(MathOptInterfaceGLPK.GLPKSolverMIP())
-# linear2test(MathOptInterfaceGLPK.GLPKSolver())
-# linear3test(MathOptInterfaceGLPK.GLPKSolver())
-# linear4test(MathOptInterfaceGLPK.GLPKSolver())
-# linear5test(MathOptInterfaceGLPK.GLPKSolver())
-# linear6test(MathOptInterfaceGLPK.GLPKSolver())
-# linear7test(MathOptInterfaceGLPK.GLPKSolver())
-# # linear8test(MathOptInterfaceGLPK.GLPKSolver()) # infeasible/unbounded
-# linear9test(MathOptInterfaceGLPK.GLPKSolver())
-# linear10test(MathOptInterfaceGLPK.GLPKSolver())
-# linear11test(MathOptInterfaceGLPK.GLPKSolver())
+linear1test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear2test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear3test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear4test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear5test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear6test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear7test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear10test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear8test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible/unbounded
+linear9test(MathOptInterfaceGLPK.GLPKSolverLP())
+linear11test(MathOptInterfaceGLPK.GLPKSolverLP())
 
 # # intlinear
-# knapsacktest(MathOptInterfaceGLPK.GLPKSolver())
-# int1test(MathOptInterfaceGLPK.GLPKSolver())
-# # int2test(MathOptInterfaceGLPK.GLPKSolver()) # SOS
-# int3test(MathOptInterfaceGLPK.GLPKSolver())
+# knapsacktest(MathOptInterfaceGLPK.GLPKSolverMIP())
+# int3test(MathOptInterfaceGLPK.GLPKSolverMIP())
+# int1test(MathOptInterfaceGLPK.GLPKSolverMIP())
+# # int2test(MathOptInterfaceGLPK.GLPKSolverMIP()) # SOS
 
 # # contconic
-# lin1tests(MathOptInterfaceGLPK.GLPKSolver())
-# lin2tests(MathOptInterfaceGLPK.GLPKSolver())
-# # lin3test(MathOptInterfaceGLPK.GLPKSolver()) # infeasible
-# # lin4test(MathOptInterfaceGLPK.GLPKSolver()) # infeasible
+lin1tests(MathOptInterfaceGLPK.GLPKSolverLP())
+lin2tests(MathOptInterfaceGLPK.GLPKSolverLP())
+# lin3test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible
+# # lin4test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible
