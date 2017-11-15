@@ -18,13 +18,13 @@ linear9test(MathOptInterfaceGLPK.GLPKSolverLP())
 linear11test(MathOptInterfaceGLPK.GLPKSolverLP())
 
 # # intlinear
-# knapsacktest(MathOptInterfaceGLPK.GLPKSolverMIP())
-# int3test(MathOptInterfaceGLPK.GLPKSolverMIP())
-# int1test(MathOptInterfaceGLPK.GLPKSolverMIP())
+knapsacktest(MathOptInterfaceGLPK.GLPKSolverMIP())
+int3test(MathOptInterfaceGLPK.GLPKSolverMIP())
+# int1test(MathOptInterfaceGLPK.GLPKSolverMIP()) #queries
 # # int2test(MathOptInterfaceGLPK.GLPKSolverMIP()) # SOS
 
 # # contconic
 lin1tests(MathOptInterfaceGLPK.GLPKSolverLP())
 lin2tests(MathOptInterfaceGLPK.GLPKSolverLP())
 # lin3test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible
-# # lin4test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible
+# lin4test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible

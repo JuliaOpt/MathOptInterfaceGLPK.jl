@@ -254,7 +254,7 @@ function LQOI.lqs_chgbds!(instance::GLPKSolverInstance, colvec, valvec, sensevec
             collb = valvec[i]
             colub = Inf
             u = GLPK.get_col_ub(m, colvec[i])
-            if u < Inf
+            if u < 1e100
                 bt = GLPK.DB
                 colub = u
             else
@@ -264,7 +264,7 @@ function LQOI.lqs_chgbds!(instance::GLPKSolverInstance, colvec, valvec, sensevec
             colub = valvec[i]
             collb = -Inf
             l = GLPK.get_col_lb(m, colvec[i])
-            if l > -Inf
+            if l > -1e100
                 bt = GLPK.DB
                 collb = l
             else
@@ -273,8 +273,10 @@ function LQOI.lqs_chgbds!(instance::GLPKSolverInstance, colvec, valvec, sensevec
         else
             error("invalid bound type")
         end
-        if colub == Inf && collb == -Inf
+        if colub > 1e100 && collb < -1e100
             bt = GLPK.FR
+            colub = Inf
+            collb = -Inf
         elseif colub == collb
             bt = GLPK.FX
         end
@@ -356,22 +358,25 @@ function setrhs(instance::GLPKSolverInstance, idx::Integer, rhs::Real)
     l = GLPK.get_row_lb(lp, idx)
     u = GLPK.get_row_ub(lp, idx)
 
+    rowub = Inf
+    rowlb = -Inf
+
     if l == u
         bt = GLPK.FX
         rowlb = rhs
         rowub = rhs
-    elseif l < Inf && u < Inf
+    elseif l > -Inf && u < Inf
         bt = GLPK.FX
         rowlb = rhs
         rowub = rhs
-    elseif l < Inf
+    elseif l > -Inf
         bt = GLPK.LO
         rowlb = rhs
-        ruwub = Inf
+        rowub = Inf
     elseif u < Inf
         bt = GLPK.UP
         rowlb = -Inf
-        ruwub = rhs
+        rowub = rhs
     else
         error("not valid rhs")
     end
@@ -708,11 +713,11 @@ function LQOI.lqs_terminationstatus(model::GLPKSolverLPInstance)
     elseif s == GLPK.INFEAS
         return MOI.InfeasibleNoResult
     elseif s == GLPK.UNBND
-        return OI.UnboundedNoResult
+        return MOI.UnboundedNoResult
     elseif s == GLPK.FEAS
         return MOI.SlowProgress
     elseif s == GLPK.NOFEAS
-        return MOI.OtherError
+        return MOI.InfeasibleOrUnbounded
     elseif s == GLPK.UNDEF
         return MOI.OtherError
     else
@@ -739,7 +744,7 @@ function LQOI.lqs_primalstatus(model::GLPKSolverMIPInstance)
 
     out = MOI.UnknownResultStatus
 
-    if s in [GLPK.OPT, GLPK.FEAS]
+    if s in [GLPK.OPT]#, GLPK.FEAS]
         out = MOI.FeasiblePoint
     end
     return out
@@ -751,7 +756,7 @@ function LQOI.lqs_primalstatus(model::GLPKSolverLPInstance)
 
     out = MOI.UnknownResultStatus
 
-    if s in [GLPK.OPT, GLPK.FEAS]
+    if s in [GLPK.OPT]#, GLPK.FEAS]
         out = MOI.FeasiblePoint
     end
     return out
@@ -915,7 +920,7 @@ LQOI.lqs_make_problem_type_continuous(instance::GLPKSolverInstance) = GLPK._make
     old helpers
 =#
 function opt!(lpm::GLPKSolverLPInstance)
-    write_lp(lpm.inner, "model.lp")
+    # write_lp(lpm.inner, "model.lp")
     if lpm.method == :Simplex
         solve = GLPK.simplex
     elseif lpm.method == :Exact
@@ -929,7 +934,7 @@ function opt!(lpm::GLPKSolverLPInstance)
 end
 
 function opt!(lpm::GLPKSolverMIPInstance)
-    write_lp(lpm.inner, "model.lp")
+    # write_lp(lpm.inner, "model.lp")
     vartype = getvartype(lpm)
     lb = getvarLB(lpm)
     ub = getvarUB(lpm)
