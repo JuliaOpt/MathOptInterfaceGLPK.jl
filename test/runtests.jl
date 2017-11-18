@@ -1,30 +1,36 @@
-using GLPK, Base.Test, MathOptInterface, MathOptInterfaceGLPK
+using GLPK, Base.Test, MathOptInterface, MathOptInterfaceTests, MathOptInterfaceGLPK
 include(joinpath(Pkg.dir("MathOptInterface"), "test", "contlinear.jl"))
 include(joinpath(Pkg.dir("MathOptInterface"), "test", "intlinear.jl"))
 include(joinpath(Pkg.dir("MathOptInterface"), "test", "contconic.jl"))
 
+const MOIT = MathOptInterfaceTests
+const MOIGLP = MathOptInterfaceGLPK
 
-# contlinear
-linear1test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear2test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear3test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear4test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear5test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear6test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear7test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear10test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear8test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible/unbounded
-linear9test(MathOptInterfaceGLPK.GLPKSolverLP())
-linear11test(MathOptInterfaceGLPK.GLPKSolverLP())
+@testset "MathOptInterfaceGLPK" begin
+    @testset "Linear tests" begin
+        linconfig_nocertificate = MOIT.TestConfig(1e-8,1e-8,true,true,false)
+        solver = MOIGLP.GLPKSolverLP()
+        MOIT.contlineartest(solver, linconfig_nocertificate)
+        
+        linconfig_nocertificate_noduals = MOIT.TestConfig(1e-8,1e-8,true,false,false)
+        solver_mip = MOIGLP.GLPKSolverMIP()
+        MOIT.contlineartest(solver_mip, linconfig_nocertificate_noduals, ["linear8b","linear8c"])
+    end
 
-# # intlinear
-knapsacktest(MathOptInterfaceGLPK.GLPKSolverMIP())
-int3test(MathOptInterfaceGLPK.GLPKSolverMIP())
-# int1test(MathOptInterfaceGLPK.GLPKSolverMIP()) #queries
-# # int2test(MathOptInterfaceGLPK.GLPKSolverMIP()) # SOS
+    @testset "Linear Conic tests" begin
+        linconfig_nocertificate = MOIT.TestConfig(1e-8,1e-8,true,true,false)
+        solver = MOIGLP.GLPKSolverLP()
+        MOIT.lintest(solver, linconfig_nocertificate)
+        
+        linconfig_nocertificate_noduals = MOIT.TestConfig(1e-8,1e-8,true,false,false)
+        solver_mip = MOIGLP.GLPKSolverMIP()
+        MOIT.lintest(solver_mip, linconfig_nocertificate_noduals)
+    end
 
-# # contconic
-lin1tests(MathOptInterfaceGLPK.GLPKSolverLP())
-lin2tests(MathOptInterfaceGLPK.GLPKSolverLP())
-# lin3test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible
-# lin4test(MathOptInterfaceGLPK.GLPKSolverLP()) # infeasible
+    @testset "Integer Linear tests" begin
+        intconfig = MOIT.TestConfig(1e-8,1e-8,true,true,true)
+        solver = MOIGLP.GLPKSolverMIP()
+        MOIT.intlineartest(solver, intconfig, ["int2","int1"])
+    end
+end
+;
