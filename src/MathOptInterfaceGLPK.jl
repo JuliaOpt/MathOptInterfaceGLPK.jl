@@ -5,13 +5,15 @@ import Base.show, Base.copy
 # Standard LP interface
 # importall MathProgBase.SolverInterface
 
+export GLPKSolverLPInstance, GLPKSolverMIPInstance
+
 using GLPK
 using MathOptInterface
 const MOI = MathOptInterface
 using LinQuadOptInterface
 const LQOI = LinQuadOptInterface
 
-# Many functions in this modulo are adapted from GLPKMathProgInterface.jl. This is the copyright notice:
+# Many functions in this module are adapted from GLPKMathProgInterface.jl. This is the copyright notice:
 ## Copyright (c) 2013: Carlo Baldassi
 ## Permission is hereby granted, free of charge, to any person obtaining a copy
 ## of this software and associated documentation files (the "Software"), to deal
@@ -29,34 +31,6 @@ const LQOI = LinQuadOptInterface
 ## OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 ## SOFTWARE.
 
-# export GLPKSolver
-abstract type GLPKSolver <: LQOI.LinQuadSolver end
-# export GLPKMIPSolver
-# export GLPKLPSolver
-struct GLPKSolverLP <: GLPKSolver
-    presolve::Bool
-    method::Symbol
-    options
-end
-function GLPKSolverLP(presolve = false, method = :Simplex;kwargs...)
-    method in [:Simplex, :Exact, :InteriorPoint] ||
-    error("""
-          Unknown method for GLPK LP solver: $method
-                 Allowed methods:
-                   :Simplex
-                   :Exact
-                   :InteriorPoint""")
-
-    return GLPKSolverLP(presolve, method, kwargs)
-end
-struct GLPKSolverMIP <: GLPKSolver
-    presolve::Bool
-    options
-end
-function GLPKSolverMIP(presolve = false; kwargs...)
-    return GLPKSolverMIP(presolve, kwargs)
-end
-
 import GLPK.Prob
 
 const Model = GLPK.Prob
@@ -64,31 +38,35 @@ Model(env) = Model()
 
 abstract type GLPKSolverInstance <: LQOI.LinQuadSolverInstance end
 
-type GLPKSolverLPInstance <: GLPKSolverInstance
-
+mutable struct GLPKSolverLPInstance <: GLPKSolverInstance
     LQOI.@LinQuadSolverInstanceBase
-
     method::Symbol
     param::Union{GLPK.SimplexParam, GLPK.InteriorParam}
-   
 end
-
-function MOI.SolverInstance(s::GLPKSolverLP)
-    if s.method == :Simplex || s.method == :Exact
+function GLPKSolverLPInstance(presolve = false, method = :Simplex;kwargs...)
+    if !(method in [:Simplex,:Exact,:InteriorPoint])
+        error("""
+        Unknown method for GLPK LP solver: $method
+            Allowed methods:
+                :Simplex
+                :Exact
+                :InteriorPoint""")
+    end
+    if method == :Simplex || method == :Exact
         param = GLPK.SimplexParam()
-        if s.presolve
+        if presolve
             param.presolve = GLPK.ON
         end
-    elseif s.method == :InteriorPoint
+    elseif method == :InteriorPoint
         param = GLPK.InteriorParam()
-        if s.presolve
+        if presolve
             warn("Ignored option: presolve")
         end
     else
         error("This is a bug")
     end
     param.msg_lev = GLPK.MSG_ERR
-    for (k,v) in s.options
+    for (k,v) in kwargs
         i = findfirst(x->x==k, fieldnames(typeof(param)))
         if i > 0
             t = typeof(param).types[i]
@@ -101,7 +79,7 @@ function MOI.SolverInstance(s::GLPKSolverLP)
     env = nothing
     m = GLPKSolverLPInstance(
         (LQOI.@LinQuadSolverInstanceBaseInit)...,
-        s.method,
+        method,
         param,
     )
 
@@ -122,12 +100,11 @@ mutable struct GLPKSolverMIPInstance <: GLPKSolverInstance
     # cbdata::MathProgCallbackData
     binaries::Vector{Int}
     userlimit::Bool
-
     
 end
 
 
-function MOI.SolverInstance(s::GLPKSolverMIP)
+function GLPKSolverMIPInstance(presolve = false; kwargs...)
 
     env = nothing
     lpm = GLPKSolverMIPInstance(
@@ -143,14 +120,14 @@ function MOI.SolverInstance(s::GLPKSolverMIP)
 
     lpm.param.msg_lev = GLPK.MSG_ERR
     lpm.smplxparam.msg_lev = GLPK.MSG_ERR
-    if s.presolve
+    if presolve
         lpm.param.presolve = GLPK.ON
     end
 
     # lpm.param.cb_func = cfunction(_internal_callback, Void, (Ptr{Void}, Ptr{Void}))
     # lpm.param.cb_info = pointer_from_objref(lpm.cbdata)
 
-    for (k,v) in s.options
+    for (k,v) in kwargs
         if k in [:cb_func, :cb_info]
             warn("ignored option: $(string(k)); use the MathProgBase callback interface instead")
             continue
@@ -201,14 +178,10 @@ const SUPPORTED_OBJECTIVES = [
     LQOI.Linear
 ]
 
-LQOI.lqs_supported_constraints(s::GLPKSolverMIP) = SUPPORTED_CONSTRAINTS_MIP
 LQOI.lqs_supported_constraints(s::GLPKSolverMIPInstance) = SUPPORTED_CONSTRAINTS_MIP
-LQOI.lqs_supported_objectives(s::GLPKSolverMIP) = SUPPORTED_OBJECTIVES
 LQOI.lqs_supported_objectives(s::GLPKSolverMIPInstance) = SUPPORTED_OBJECTIVES
 
-LQOI.lqs_supported_constraints(s::GLPKSolverLP) = SUPPORTED_CONSTRAINTS_LP
 LQOI.lqs_supported_constraints(s::GLPKSolverLPInstance) = SUPPORTED_CONSTRAINTS_LP
-LQOI.lqs_supported_objectives(s::GLPKSolverLP) = SUPPORTED_OBJECTIVES
 LQOI.lqs_supported_objectives(s::GLPKSolverLPInstance) = SUPPORTED_OBJECTIVES
 #=
     inner wrapper
