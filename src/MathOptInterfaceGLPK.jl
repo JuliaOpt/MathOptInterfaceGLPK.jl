@@ -1,3 +1,4 @@
+__precompile__()
 module MathOptInterfaceGLPK
 
 import Base.copy
@@ -555,9 +556,15 @@ LQOI.lqs_copyquad!(instance::GLPKOptimizer, I, J, V) = error("GLPK does no suppo
 
 # LQOI.lqs_chgobj(m, colvec,coefvec)
 function LQOI.lqs_chgobj!(instance::GLPKOptimizer, colvec, coefvec)
+    ncols = GLPK.get_num_cols(instance.inner)
+    new_colvec = collect(1:ncols)
+    new_coefvec = zeros(ncols)
+    for (ind,val) in enumerate(colvec)
+        new_coefvec[val] = coefvec[ind]
+    end
     m = instance.inner
-    for i in eachindex(colvec)
-        GLPK.set_obj_coef(m, colvec[i], coefvec[i])
+    for i in eachindex(new_colvec)
+        GLPK.set_obj_coef(m, new_colvec[i], new_coefvec[i])
     end
     nothing
 end
