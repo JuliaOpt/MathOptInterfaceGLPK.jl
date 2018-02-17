@@ -1,11 +1,8 @@
 module MathOptInterfaceGLPK
 
-import Base.show, Base.copy
+import Base.copy
 
-# Standard LP interface
-# importall MathProgBase.SolverInterface
-
-export GLPKSolverLPInstance, GLPKSolverMIPInstance
+export GLPKOptimizerLP, GLPKOptimizerMIP
 
 using GLPK
 using MathOptInterface
@@ -31,19 +28,48 @@ const LQOI = LinQuadOptInterface
 ## OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 ## SOFTWARE.
 
+const SUPPORTED_OBJECTIVES = [
+    LQOI.Linear
+]
+const SUPPORTED_CONSTRAINTS_LP = [
+    (LQOI.Linear, LQOI.EQ),
+    (LQOI.Linear, LQOI.LE),
+    (LQOI.Linear, LQOI.GE),
+    (LQOI.Linear, LQOI.IV),
+    (LQOI.SinVar, LQOI.EQ),
+    (LQOI.SinVar, LQOI.LE),
+    (LQOI.SinVar, LQOI.GE),
+    (LQOI.SinVar, LQOI.IV),
+    (LQOI.VecVar, MOI.Nonnegatives),
+    (LQOI.VecVar, MOI.Nonpositives),
+    (LQOI.VecVar, MOI.Zeros),
+    (LQOI.VecLin, MOI.Nonnegatives),
+    (LQOI.VecLin, MOI.Nonpositives),
+    (LQOI.VecLin, MOI.Zeros)
+]
+const SUPPORTED_CONSTRAINTS_MIP = vcat(SUPPORTED_CONSTRAINTS_LP, [
+    (LQOI.SinVar, MOI.ZeroOne),
+    (LQOI.SinVar, MOI.Integer),
+    # (VecVar, LQOI.SOS1),
+    # (VecVar, LQOI.SOS2),
+])
+
+abstract type GLPKOptimizer <: LQOI.LinQuadOptimizer end
+
 import GLPK.Prob
 
 const Model = GLPK.Prob
 Model(env) = Model()
 
-abstract type GLPKSolverInstance <: LQOI.LinQuadSolverInstance end
+LQOI.LinQuadModel(::Type{M},env) where M<:GLPKOptimizer = GLPK.Prob()
 
-mutable struct GLPKSolverLPInstance <: GLPKSolverInstance
-    LQOI.@LinQuadSolverInstanceBase
+mutable struct GLPKOptimizerLP <: GLPKOptimizer
+    LQOI.@LinQuadOptimizerBase
     method::Symbol
     param::Union{GLPK.SimplexParam, GLPK.InteriorParam}
+    GLPKOptimizerLP(::Void) = new()
 end
-function GLPKSolverLPInstance(presolve = false, method = :Simplex;kwargs...)
+function GLPKOptimizerLP(presolve = false, method = :Simplex;kwargs...)
     if !(method in [:Simplex,:Exact,:InteriorPoint])
         error("""
         Unknown method for GLPK LP solver: $method
@@ -76,19 +102,17 @@ function GLPKSolverLPInstance(presolve = false, method = :Simplex;kwargs...)
         end
     end
 
-    env = nothing
-    m = GLPKSolverLPInstance(
-        (LQOI.@LinQuadSolverInstanceBaseInit)...,
-        method,
-        param,
-    )
+    m = GLPKOptimizerLP(nothing)
+    m.param = param
+    m.method = method
+    MOI.empty!(m)
 
     return m
 end
 
-mutable struct GLPKSolverMIPInstance <: GLPKSolverInstance
+mutable struct GLPKOptimizerMIP <: GLPKOptimizer
 
-    LQOI.@LinQuadSolverInstanceBase
+    LQOI.@LinQuadOptimizerBase
 
     param::GLPK.IntoptParam
     smplxparam::GLPK.SimplexParam
@@ -101,22 +125,20 @@ mutable struct GLPKSolverMIPInstance <: GLPKSolverInstance
     binaries::Vector{Int}
     userlimit::Bool
     
+    GLPKOptimizerMIP(::Void) = new()
 end
 
 
-function GLPKSolverMIPInstance(presolve = false; kwargs...)
+function GLPKOptimizerMIP(presolve = false; kwargs...)
 
     env = nothing
-    lpm = GLPKSolverMIPInstance(
-        (LQOI.@LinQuadSolverInstanceBaseInit)...,
-        GLPK.IntoptParam(),
-        GLPK.SimplexParam(),
-        -Inf,
-        Int[],
-        false,
-    )
-    # lpm.cbdata = GLPKCallbackData(lpm)
-
+    lpm = GLPKOptimizerMIP(nothing)
+    lpm.param = GLPK.IntoptParam()
+    lpm.smplxparam = GLPK.SimplexParam()
+    lpm.objbound = -Inf
+    lpm.binaries = Int[]
+    lpm.userlimit = false
+    MOI.empty!(lpm)
 
     lpm.param.msg_lev = GLPK.MSG_ERR
     lpm.smplxparam.msg_lev = GLPK.MSG_ERR
@@ -151,38 +173,13 @@ function GLPKSolverMIPInstance(presolve = false; kwargs...)
     return lpm
 end
 
+function MOI.empty!(m::GLPKOptimizer) 
+    MOI.empty!(m,nothing)
+end
 
-const SUPPORTED_CONSTRAINTS_LP = [
-    (LQOI.Linear, LQOI.EQ),
-    (LQOI.Linear, LQOI.LE),
-    (LQOI.Linear, LQOI.GE),
-    (LQOI.Linear, LQOI.IV),
-    (LQOI.SinVar, LQOI.EQ),
-    (LQOI.SinVar, LQOI.LE),
-    (LQOI.SinVar, LQOI.GE),
-    (LQOI.SinVar, LQOI.IV),
-    (LQOI.VecVar, MOI.Nonnegatives),
-    (LQOI.VecVar, MOI.Nonpositives),
-    (LQOI.VecVar, MOI.Zeros),
-    (LQOI.VecLin, MOI.Nonnegatives),
-    (LQOI.VecLin, MOI.Nonpositives),
-    (LQOI.VecLin, MOI.Zeros)
-]
-const SUPPORTED_CONSTRAINTS_MIP = vcat(SUPPORTED_CONSTRAINTS_LP, [
-    (LQOI.SinVar, MOI.ZeroOne),
-    (LQOI.SinVar, MOI.Integer),
-    # (VecVar, MOI.SOS1),
-    # (VecVar, MOI.SOS2),
-])
-const SUPPORTED_OBJECTIVES = [
-    LQOI.Linear
-]
-
-LQOI.lqs_supported_constraints(s::GLPKSolverMIPInstance) = SUPPORTED_CONSTRAINTS_MIP
-LQOI.lqs_supported_objectives(s::GLPKSolverMIPInstance) = SUPPORTED_OBJECTIVES
-
-LQOI.lqs_supported_constraints(s::GLPKSolverLPInstance) = SUPPORTED_CONSTRAINTS_LP
-LQOI.lqs_supported_objectives(s::GLPKSolverLPInstance) = SUPPORTED_OBJECTIVES
+LQOI.lqs_supported_objectives(s::GLPKOptimizer) = SUPPORTED_OBJECTIVES
+LQOI.lqs_supported_constraints(s::GLPKOptimizerMIP) = SUPPORTED_CONSTRAINTS_MIP
+LQOI.lqs_supported_constraints(s::GLPKOptimizerLP) = SUPPORTED_CONSTRAINTS_LP
 #=
     inner wrapper
 =#
@@ -196,11 +193,11 @@ LQOI.lqs_supported_objectives(s::GLPKSolverLPInstance) = SUPPORTED_OBJECTIVES
 
 # LQOI.lqs_setparam!(env, name, val)
 # TODO fix this one
-# LQOI.lqs_setparam!(m::GLPKSolverInstance, name, val) = GLPK.setfield!(m.inner, string(name), val)
+# LQOI.lqs_setparam!(m::GLPKOptimizer, name, val) = GLPK.setfield!(m.inner, string(name), val)
 
 # LQOI.lqs_setlogfile!(env, path)
 # TODO fix this one
-# LQOI.lqs_setlogfile!(m::GLPKSolverInstance, path) = GLPK.setlogfile(m.inner, path::String)
+# LQOI.lqs_setlogfile!(m::GLPKOptimizer, path) = GLPK.setlogfile(m.inner, path::String)
 
 # LQOI.lqs_getprobtype(m)
 # TODO - consider removing, apparently useless
@@ -209,11 +206,8 @@ LQOI.lqs_supported_objectives(s::GLPKSolverLPInstance) = SUPPORTED_OBJECTIVES
     Constraints
 =#
 
-cintvec(v::Vector) = convert(Vector{Int32}, v)
-cdoublevec(v::Vector) = convert(Vector{Float64}, v)
-
 # LQOI.lqs_chgbds!(m, colvec, valvec, sensevec)
-function LQOI.lqs_chgbds!(instance::GLPKSolverInstance, colvec, valvec, sensevec)
+function LQOI.lqs_chgbds!(instance::GLPKOptimizer, colvec, valvec, sensevec)
     m = instance.inner
     for i in eachindex(colvec)
         colub = Inf
@@ -260,16 +254,16 @@ end
 
 
 # LQOI.lqs_getlb(m, col)
-LQOI.lqs_getlb(instance::GLPKSolverInstance, col) = GLPK.get_col_lb(instance.inner, col)
+LQOI.lqs_getlb(instance::GLPKOptimizer, col) = GLPK.get_col_lb(instance.inner, col)
 
 # LQOI.lqs_getub(m, col)
-LQOI.lqs_getub(instance::GLPKSolverInstance, col) = GLPK.get_col_ub(instance.inner, col)
+LQOI.lqs_getub(instance::GLPKOptimizer, col) = GLPK.get_col_ub(instance.inner, col)
 
 # LQOI.lqs_getnumrows(m)
-LQOI.lqs_getnumrows(instance::GLPKSolverInstance) = GLPK.get_num_rows(instance.inner)
+LQOI.lqs_getnumrows(instance::GLPKOptimizer) = GLPK.get_num_rows(instance.inner)
 
 # LQOI.lqs_addrows!(m, rowvec, colvec, coefvec, sensevec, rhsvec)
-function LQOI.lqs_addrows!(instance::GLPKSolverInstance, rowvec, colvec, coefvec, sensevec, rhsvec) 
+function LQOI.lqs_addrows!(instance::GLPKOptimizer, rowvec, colvec, coefvec, sensevec, rhsvec) 
     m = instance.inner
 
     nrows = length(rhsvec)
@@ -325,7 +319,7 @@ function addrow!(lp::GLPK.Prob, colidx::Vector, colcoef::Vector, sense::Cchar, r
     return
 end
 
-function setrhs(instance::GLPKSolverInstance, idx::Integer, rhs::Real)
+function setrhs(instance::GLPKOptimizer, idx::Integer, rhs::Real)
     lp = instance.inner
 
     l = GLPK.get_row_lb(lp, idx)
@@ -357,7 +351,7 @@ function setrhs(instance::GLPKSolverInstance, idx::Integer, rhs::Real)
     GLPK.set_row_bnds(lp, idx, bt, rowlb, rowub)
 end
 # LQOI.lqs_getrhs(m, rowvec)
-function LQOI.lqs_getrhs(instance::GLPKSolverInstance, row)
+function LQOI.lqs_getrhs(instance::GLPKOptimizer, row)
     m = instance.inner
     sense = GLPK.get_row_type(m, row)
     if sense == GLPK.LO
@@ -372,7 +366,7 @@ function LQOI.lqs_getrhs(instance::GLPKSolverInstance, row)
 end
 # colvec, coef = LQOI.lqs_getrows(m, rowvec)
 # TODO improve
-function LQOI.lqs_getrows(instance::GLPKSolverInstance, idx)
+function LQOI.lqs_getrows(instance::GLPKOptimizer, idx)
     lp = instance.inner
     colidx, coefs = GLPK.get_mat_row(lp, idx)
     return colidx-1, coefs
@@ -380,7 +374,7 @@ end
 
 # LQOI.lqs_getcoef(m, row, col) #??
 # TODO improve
-function LQOI.lqs_getcoef(instance::GLPKSolverInstance, row, col)
+function LQOI.lqs_getcoef(instance::GLPKOptimizer, row, col)
     lp = instance.inner
     colidx, coefs = GLPK.get_mat_row(lp, row)
     idx = findfirst(colidx, col)
@@ -392,7 +386,7 @@ function LQOI.lqs_getcoef(instance::GLPKSolverInstance, row, col)
 end
 
 # LQOI.lqs_chgcoef!(m, row, col, coef)
-function LQOI.lqs_chgcoef!(instance::GLPKSolverInstance, row, col, coef)
+function LQOI.lqs_chgcoef!(instance::GLPKOptimizer, row, col, coef)
     if row == 0 
         lp = instance.inner
         GLPK.set_obj_coef(lp, col, coef)
@@ -404,7 +398,7 @@ function LQOI.lqs_chgcoef!(instance::GLPKSolverInstance, row, col, coef)
     return nothing
 end
 
-function chgmatcoef!(instance::GLPKSolverInstance, row, col, coef)
+function chgmatcoef!(instance::GLPKOptimizer, row, col, coef)
     lp = instance.inner
     colidx, coefs = GLPK.get_mat_row(lp, row)
     idx = findfirst(colidx, col)
@@ -418,7 +412,7 @@ function chgmatcoef!(instance::GLPKSolverInstance, row, col, coef)
     return nothing
 end
 # LQOI.lqs_delrows!(m, row, row)
-function LQOI.lqs_delrows!(instance::GLPKSolverInstance, rowbeg, rowend)
+function LQOI.lqs_delrows!(instance::GLPKOptimizer, rowbeg, rowend)
 
     m = instance.inner
 
@@ -431,7 +425,7 @@ function LQOI.lqs_delrows!(instance::GLPKSolverInstance, rowbeg, rowend)
 end
 # LQOI.lqs_chgctype!(m, colvec, typevec)
 # TODO fix types
-function LQOI.lqs_chgctype!(instance::GLPKSolverInstance, colvec, vartype)
+function LQOI.lqs_chgctype!(instance::GLPKOptimizer, colvec, vartype)
 
     lp = instance.inner
     coltype = GLPK.CV
@@ -452,13 +446,13 @@ function LQOI.lqs_chgctype!(instance::GLPKSolverInstance, colvec, vartype)
 end
 # LQOI.lqs_chgsense!(m, rowvec, sensevec)
 # TODO fix types
-function LQOI.lqs_chgsense!(instance::GLPKSolverInstance, rowvec, sensevec)
+function LQOI.lqs_chgsense!(instance::GLPKOptimizer, rowvec, sensevec)
     for i in eachindex(rowvec)
         changesense!(instance, rowvec[i], sensevec[i])
     end
     nothing
 end
-function changesense!(instance::GLPKSolverInstance, row, sense)
+function changesense!(instance::GLPKOptimizer, row, sense)
     m = instance.inner
     oldsense = GLPK.get_row_type(m, row)
     newsense = translatesense(sense)
@@ -509,34 +503,34 @@ const VAR_TYPE_MAP = Dict{Symbol,Cchar}(
     :INTEGER => Cchar('I'),
     :BINARY => Cchar('B')
 )
-LQOI.lqs_vartype_map(m::GLPKSolverInstance) = VAR_TYPE_MAP
+LQOI.lqs_vartype_map(m::GLPKOptimizer) = VAR_TYPE_MAP
 
 # LQOI.lqs_addsos(m, colvec, valvec, typ)
-LQOI.lqs_addsos!(instance::GLPKSolverInstance, colvec, valvec, typ) = GLPK.add_sos!(instance.inner, typ, colvec, valvec)
+LQOI.lqs_addsos!(instance::GLPKOptimizer, colvec, valvec, typ) = GLPK.add_sos!(instance.inner, typ, colvec, valvec)
 # LQOI.lqs_delsos(m, idx, idx)
-LQOI.lqs_delsos!(instance::GLPKSolverInstance, idx1, idx2) = error("cant del SOS")
+LQOI.lqs_delsos!(instance::GLPKOptimizer, idx1, idx2) = error("cant del SOS")
 
 const SOS_TYPE_MAP = Dict{Symbol,Symbol}(
     :SOS1 => :SOS1,#Cchar('1'),
     :SOS2 => :SOS2#Cchar('2')
 )
-LQOI.lqs_sertype_map(m::GLPKSolverInstance) = SOS_TYPE_MAP
+LQOI.lqs_sertype_map(m::GLPKOptimizer) = SOS_TYPE_MAP
 
 # LQOI.lqs_getsos(m, idx)
 # TODO improve getting processes
-function LQOI.lqs_getsos(instance::GLPKSolverInstance, idx)
+function LQOI.lqs_getsos(instance::GLPKOptimizer, idx)
     indices, weights, types = GLPK.getsos(instance.inner, idx)
 
     return indices, weights, types == Cchar('1') ? :SOS1 : :SOS2
 end
 # LQOI.lqs_getnumqconstrs(m)
-LQOI.lqs_getnumqconstrs(instance::GLPKSolverInstance) = error("GLPK does not support quadratic ocnstraints")
+LQOI.lqs_getnumqconstrs(instance::GLPKOptimizer) = error("GLPK does not support quadratic ocnstraints")
 
 # LQOI.lqs_addqconstr(m, cols,coefs,rhs,sense, I,J,V)
-LQOI.lqs_addqconstr!(instance::GLPKSolverInstance, cols,coefs,rhs,sense, I,J,V) = error("GLPK does not support quadratic ocnstraints")
+LQOI.lqs_addqconstr!(instance::GLPKOptimizer, cols,coefs,rhs,sense, I,J,V) = error("GLPK does not support quadratic ocnstraints")
 
 # LQOI.lqs_chgrngval
-function LQOI.lqs_chgrngval!(instance::GLPKSolverInstance, rows, vals)
+function LQOI.lqs_chgrngval!(instance::GLPKOptimizer, rows, vals)
     lp = instance.inner
     for i in eachindex(rows)
         l = GLPK.get_row_lb(lp, rows[i])
@@ -550,17 +544,17 @@ const CTR_TYPE_MAP = Dict{Symbol,Cchar}(
     :UPPER => Cchar('L'),
     :EQUALITY => Cchar('E')
 )
-LQOI.lqs_ctrtype_map(m::GLPKSolverInstance) = CTR_TYPE_MAP
+LQOI.lqs_ctrtype_map(m::GLPKOptimizer) = CTR_TYPE_MAP
 
 #=
     Objective
 =#
 
 # LQOI.lqs_copyquad(m, intvec,intvec, floatvec) #?
-LQOI.lqs_copyquad!(instance::GLPKSolverInstance, I, J, V) = error("GLPK does no support quadratics")
+LQOI.lqs_copyquad!(instance::GLPKOptimizer, I, J, V) = error("GLPK does no support quadratics")
 
 # LQOI.lqs_chgobj(m, colvec,coefvec)
-function LQOI.lqs_chgobj!(instance::GLPKSolverInstance, colvec, coefvec)
+function LQOI.lqs_chgobj!(instance::GLPKOptimizer, colvec, coefvec)
     m = instance.inner
     for i in eachindex(colvec)
         GLPK.set_obj_coef(m, colvec[i], coefvec[i])
@@ -570,7 +564,7 @@ end
 
 # LQOI.lqs_chgobjsen(m, symbol)
 # TODO improve min max names
-function LQOI.lqs_chgobjsen!(instance::GLPKSolverInstance, sense) 
+function LQOI.lqs_chgobjsen!(instance::GLPKOptimizer, sense) 
     m = instance.inner
     if sense == :Min
         GLPK.set_obj_dir(m, GLPK.MIN)
@@ -581,7 +575,7 @@ function LQOI.lqs_chgobjsen!(instance::GLPKSolverInstance, sense)
     end
 end
 # LQOI.lqs_getobj(m)
-function LQOI.lqs_getobj(instance::GLPKSolverInstance)
+function LQOI.lqs_getobj(instance::GLPKOptimizer)
     m = instance.inner
     n = GLPK.get_num_cols(m)
     obj = Array{Float64}(n)
@@ -593,7 +587,7 @@ function LQOI.lqs_getobj(instance::GLPKSolverInstance)
 end
 
 # lqs_getobjsen(m)
-function LQOI.lqs_getobjsen(instance::GLPKSolverInstance)
+function LQOI.lqs_getobjsen(instance::GLPKOptimizer)
 
     s = GLPK.get_obj_dir(instance.inner)
     if s == GLPK.MIN
@@ -611,10 +605,10 @@ end
 =#
 
 # LQOI.lqs_getnumcols(m)
-LQOI.lqs_getnumcols(instance::GLPKSolverInstance) = GLPK.get_num_cols(instance.inner)
+LQOI.lqs_getnumcols(instance::GLPKOptimizer) = GLPK.get_num_cols(instance.inner)
 
 # LQOI.lqs_newcols!(m, int)
-function LQOI.lqs_newcols!(instance::GLPKSolverInstance, int)
+function LQOI.lqs_newcols!(instance::GLPKOptimizer, int)
     n = GLPK.get_num_cols(instance.inner)
     GLPK.add_cols(instance.inner, int)
     for i in 1:int
@@ -624,33 +618,33 @@ function LQOI.lqs_newcols!(instance::GLPKSolverInstance, int)
 end
 
 # LQOI.lqs_delcols!(m, col, col)
-function LQOI.lqs_delcols!(instance::GLPKSolverInstance, col, col2)
+function LQOI.lqs_delcols!(instance::GLPKOptimizer, col, col2)
     idx = collect(col:col2)
     GLPK.std_basis(instance.inner)
     GLPK.del_cols(instance.inner, length(idx), idx)
 end
 
 # LQOI.lqs_addmipstarts(m, colvec, valvec)
-LQOI.lqs_addmipstarts!(instance::GLPKSolverInstance, colvec, valvec) = nothing
+LQOI.lqs_addmipstarts!(instance::GLPKOptimizer, colvec, valvec) = nothing
 #=
     Solve
 =#
 
 # LQOI.lqs_mipopt!(m)
-LQOI.lqs_mipopt!(instance::GLPKSolverInstance) = opt!(instance)
+LQOI.lqs_mipopt!(instance::GLPKOptimizer) = opt!(instance)
 
 # LQOI.lqs_qpopt!(m)
-LQOI.lqs_qpopt!(instance::GLPKSolverInstance) = error("Quadratic solving not supported")
+LQOI.lqs_qpopt!(instance::GLPKOptimizer) = error("Quadratic solving not supported")
 
 # LQOI.lqs_lpopt!(m)
-LQOI.lqs_lpopt!(instance::GLPKSolverInstance) = opt!(instance)
+LQOI.lqs_lpopt!(instance::GLPKOptimizer) = opt!(instance)
 
 
 const TERMINATION_STATUS_MAP = Dict(
 )
 
 # LQOI.lqs_terminationstatus(m)
-function LQOI.lqs_terminationstatus(model::GLPKSolverMIPInstance)
+function LQOI.lqs_terminationstatus(model::GLPKOptimizerMIP)
 
     if model.userlimit
         return MOI.OtherLimit
@@ -679,7 +673,7 @@ function LQOI.lqs_terminationstatus(model::GLPKSolverMIPInstance)
         error("internal library error")
     end
 end
-function LQOI.lqs_terminationstatus(model::GLPKSolverLPInstance)
+function LQOI.lqs_terminationstatus(model::GLPKOptimizerLP)
     s = lp_status(model)
     if s == GLPK.OPT
         return MOI.Success
@@ -698,7 +692,7 @@ function LQOI.lqs_terminationstatus(model::GLPKSolverLPInstance)
     end
 end
 
-function lp_status(lpm::GLPKSolverLPInstance)
+function lp_status(lpm::GLPKOptimizerLP)
     if lpm.method == :Simplex || lpm.method == :Exact
         get_status = GLPK.get_status
     elseif lpm.method == :InteriorPoint
@@ -710,7 +704,7 @@ function lp_status(lpm::GLPKSolverLPInstance)
     s = get_status(lpm.inner)
 end
 
-function LQOI.lqs_primalstatus(model::GLPKSolverMIPInstance)
+function LQOI.lqs_primalstatus(model::GLPKOptimizerMIP)
     m = model.inner
 
     s = GLPK.mip_status(model.inner)
@@ -722,7 +716,7 @@ function LQOI.lqs_primalstatus(model::GLPKSolverMIPInstance)
     end
     return out
 end
-function LQOI.lqs_primalstatus(model::GLPKSolverLPInstance)
+function LQOI.lqs_primalstatus(model::GLPKOptimizerLP)
     m = model.inner
 
     s = lp_status(model)
@@ -734,10 +728,10 @@ function LQOI.lqs_primalstatus(model::GLPKSolverLPInstance)
     end
     return out
 end
-function LQOI.lqs_dualstatus(model::GLPKSolverMIPInstance)
+function LQOI.lqs_dualstatus(model::GLPKOptimizerMIP)
     return MOI.UnknownResultStatus
 end
-function LQOI.lqs_dualstatus(model::GLPKSolverLPInstance)
+function LQOI.lqs_dualstatus(model::GLPKOptimizerLP)
     m = model.inner
     
     s = lp_status(model)
@@ -752,13 +746,13 @@ end
 
 
 # LQOI.lqs_getx!(m, place)
-function LQOI.lqs_getx!(instance::GLPKSolverMIPInstance, place)
+function LQOI.lqs_getx!(instance::GLPKOptimizerMIP, place)
     lp = instance.inner
     for c in eachindex(place)
         place[c] = GLPK.mip_col_val(lp, c)
     end
 end
-function LQOI.lqs_getx!(lpm::GLPKSolverLPInstance, place)
+function LQOI.lqs_getx!(lpm::GLPKOptimizerLP, place)
     lp = lpm.inner
 
     if lpm.method == :Simplex || lpm.method == :Exact
@@ -776,13 +770,13 @@ function LQOI.lqs_getx!(lpm::GLPKSolverLPInstance, place)
 end
 
 # LQOI.lqs_getax!(m, place)
-function LQOI.lqs_getax!(instance::GLPKSolverMIPInstance, place)
+function LQOI.lqs_getax!(instance::GLPKOptimizerMIP, place)
     lp = instance.inner
     for c in eachindex(place)
         place[c] = GLPK.mip_row_val(lp, c)
     end
 end
-function LQOI.lqs_getax!(lpm::GLPKSolverLPInstance, place)
+function LQOI.lqs_getax!(lpm::GLPKOptimizerLP, place)
     lp = lpm.inner
 
     if lpm.method == :Simplex || lpm.method == :Exact
@@ -801,9 +795,9 @@ end
 
 # LQOI.lqs_getdj!(m, place)
 # no-op
-function LQOI.lqs_getdj!(instance::GLPKSolverMIPInstance, place) end
+function LQOI.lqs_getdj!(instance::GLPKOptimizerMIP, place) end
 
-function LQOI.lqs_getdj!(lpm::GLPKSolverLPInstance, place)
+function LQOI.lqs_getdj!(lpm::GLPKOptimizerLP, place)
     lp = lpm.inner
 
     if lpm.method == :Simplex || lpm.method == :Exact
@@ -822,8 +816,8 @@ end
 
 # LQOI.lqs_getpi!(m, place)
 #no-op
-function LQOI.lqs_getpi!(instance::GLPKSolverMIPInstance, place) end
-function LQOI.lqs_getpi!(lpm::GLPKSolverLPInstance, place)
+function LQOI.lqs_getpi!(instance::GLPKOptimizerMIP, place) end
+function LQOI.lqs_getpi!(lpm::GLPKOptimizerLP, place)
     lp = lpm.inner
 
     if lpm.method == :Simplex || lpm.method == :Exact
@@ -841,9 +835,9 @@ function LQOI.lqs_getpi!(lpm::GLPKSolverLPInstance, place)
 end
 
 # LQOI.lqs_getobjval(m)
-LQOI.lqs_getobjval(instance::GLPKSolverMIPInstance) = GLPK.mip_obj_val(instance.inner)
+LQOI.lqs_getobjval(instance::GLPKOptimizerMIP) = GLPK.mip_obj_val(instance.inner)
 
-function LQOI.lqs_getobjval(lpm::GLPKSolverLPInstance)
+function LQOI.lqs_getobjval(lpm::GLPKOptimizerLP)
     if lpm.method == :Simplex || lpm.method == :Exact
         get_obj_val = GLPK.get_obj_val
     elseif lpm.method == :InteriorPoint
@@ -855,44 +849,44 @@ function LQOI.lqs_getobjval(lpm::GLPKSolverLPInstance)
 end
 
 # LQOI.lqs_getbestobjval(m)
-LQOI.lqs_getbestobjval(instance::GLPKSolverMIPInstance) = instance.objbound
+LQOI.lqs_getbestobjval(instance::GLPKOptimizerMIP) = instance.objbound
 
 # LQOI.lqs_getmiprelgap(m)
-LQOI.lqs_getmiprelgap(instance::GLPKSolverInstance) = abs(GLPK.mip_obj_val(instance.inner)-instance.objbound)/(1e-9+GLPK.mip_obj_val(instance.inner))
+LQOI.lqs_getmiprelgap(instance::GLPKOptimizer) = abs(GLPK.mip_obj_val(instance.inner)-instance.objbound)/(1e-9+GLPK.mip_obj_val(instance.inner))
 
 # LQOI.lqs_getitcnt(m)
-LQOI.lqs_getitcnt(instance::GLPKSolverInstance)  = -1
+LQOI.lqs_getitcnt(instance::GLPKOptimizer)  = -1
 
 # LQOI.lqs_getbaritcnt(m)
-LQOI.lqs_getbaritcnt(instance::GLPKSolverInstance) = -1
+LQOI.lqs_getbaritcnt(instance::GLPKOptimizer) = -1
 
 # LQOI.lqs_getnodecnt(m)
-LQOI.lqs_getnodecnt(instance::GLPKSolverInstance) = -1
+LQOI.lqs_getnodecnt(instance::GLPKOptimizer) = -1
 
 # LQOI.lqs_dualfarkas(m, place)
-LQOI.lqs_dualfarkas!(instance::GLPKSolverInstance, place) = getinfeasibilityray(instance, place)
+LQOI.lqs_dualfarkas!(instance::GLPKOptimizer, place) = getinfeasibilityray(instance, place)
 
 # LQOI.lqs_getray(m, place)
-LQOI.lqs_getray!(instance::GLPKSolverInstance, place) = getunboundedray(instance, place)
+LQOI.lqs_getray!(instance::GLPKOptimizer, place) = getunboundedray(instance, place)
 
 #no-op
-function MOI.free!(instance::GLPKSolverInstance) end
+function MOI.free!(instance::GLPKOptimizer) end
 
 """
-    writeproblem(m::AbstractSolverInstance, filename::String)
+    writeproblem(m: :MOI.AbstractOptimizer, filename::String)
 Writes the current problem data to the given file.
 Supported file types are solver-dependent.
 """
-writeproblem(instance::GLPKSolverInstance, filename::String, flags::String="") = GLPK.write_model(instance.inner, filename)
+writeproblem(instance::GLPKOptimizer, filename::String, flags::String="") = GLPK.write_model(instance.inner, filename)
 
 
-LQOI.lqs_make_problem_type_continuous(instance::GLPKSolverInstance) = GLPK._make_problem_type_continuous(instance.inner)
+LQOI.lqs_make_problem_type_continuous(instance::GLPKOptimizer) = GLPK._make_problem_type_continuous(instance.inner)
 
 
 #=
     old helpers
 =#
-function opt!(lpm::GLPKSolverLPInstance)
+function opt!(lpm::GLPKOptimizerLP)
     # write_lp(lpm.inner, "model.lp")
     if lpm.method == :Simplex
         solve = GLPK.simplex
@@ -906,7 +900,7 @@ function opt!(lpm::GLPKSolverLPInstance)
     return solve(lpm.inner, lpm.param)
 end
 
-function opt!(lpm::GLPKSolverMIPInstance)
+function opt!(lpm::GLPKOptimizerMIP)
     # write_lp(lpm.inner, "model.lp")
     vartype = getvartype(lpm)
     lb = getvarLB(lpm)
@@ -935,7 +929,7 @@ function opt!(lpm::GLPKSolverMIPInstance)
     end
 end
 
-function getvarLB(lpm::GLPKSolverInstance)
+function getvarLB(lpm::GLPKOptimizer)
     lp = lpm.inner
     n = GLPK.get_num_cols(lp)
     lb = Array{Float64}(n)
@@ -949,7 +943,7 @@ function getvarLB(lpm::GLPKSolverInstance)
     return lb
 end
 
-function setvarLB!(lpm::GLPKSolverInstance, collb)
+function setvarLB!(lpm::GLPKOptimizer, collb)
     lp = lpm.inner
     n = GLPK.get_num_cols(lp)
     if nonnull(collb) && length(collb) != n
@@ -981,7 +975,7 @@ function setvarLB!(lpm::GLPKSolverInstance, collb)
     end
 end
 
-function getvarUB(lpm::GLPKSolverInstance)
+function getvarUB(lpm::GLPKOptimizer)
     lp = lpm.inner
     n = GLPK.get_num_cols(lp)
     ub = Array{Float64}(n)
@@ -995,7 +989,7 @@ function getvarUB(lpm::GLPKSolverInstance)
     return ub
 end
 
-function setvarUB!(lpm::GLPKSolverInstance, colub)
+function setvarUB!(lpm::GLPKOptimizer, colub)
     lp = lpm.inner
     n = GLPK.get_num_cols(lp)
     if nonnull(colub) && length(colub) != n
@@ -1033,7 +1027,7 @@ const vartype_map = Dict(
     GLPK.BV => :Bin
 )
 
-function getvartype(lpm::GLPKSolverInstance)
+function getvartype(lpm::GLPKOptimizer)
     lp = lpm.inner
     ncol = GLPK.get_num_cols(lp)
     coltype = Array{Symbol}(ncol)
@@ -1065,7 +1059,7 @@ nonnull(x) = (x != nothing && !isempty(x))
 ### express or implied, and with no claim as to its suitability for any
 ### purpose.
 
-function getinfeasibilityray(lpm::GLPKSolverLPInstance, ray)
+function getinfeasibilityray(lpm::GLPKOptimizerLP, ray)
     lp = lpm.inner
 
     if lpm.method == :Simplex || lpm.method == :Exact
@@ -1143,7 +1137,7 @@ function getinfeasibilityray(lpm::GLPKSolverLPInstance, ray)
     return nothing
 end
 
-function getunboundedray(lpm::GLPKSolverLPInstance, ray)
+function getunboundedray(lpm::GLPKOptimizerLP, ray)
     lp = lpm.inner
 
     if lpm.method == :Simplex || lpm.method == :Exact
@@ -1189,9 +1183,5 @@ function getunboundedray(lpm::GLPKSolverLPInstance, ray)
 
     return nothing
 end
-
-
-
-
 
 end # module
