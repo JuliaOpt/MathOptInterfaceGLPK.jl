@@ -34,12 +34,20 @@ const MOIGLP = MathOptInterfaceGLPK
         MOIT.intlineartest(solver_mip, intconfig, ["int2","int1"])
     end
 
-    @testset "ModelLike tests" begin
+    @testset "ModelLike tests - MIP" begin
         intconfig = MOIT.TestConfig()
-        solver = XpressOptimizer()
+        solver = GLPKOptimizerMIP()
         MOIT.validtest(solver)
         MOIT.emptytest(solver)
-        solver2 = XpressOptimizer()
+        solver2 = GLPKOptimizerMIP()
+        MOIT.copytest(solver,solver2)
+    end
+    @testset "ModelLike tests - LP" begin
+        intconfig = MOIT.TestConfig()
+        solver = GLPKOptimizerLP()
+        MOIT.validtest(solver)
+        MOIT.emptytest(solver)
+        solver2 = GLPKOptimizerLP()
         MOIT.copytest(solver,solver2)
     end
 end
