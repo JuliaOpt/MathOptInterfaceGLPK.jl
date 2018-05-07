@@ -1,5 +1,7 @@
 MathOptInterfaceGLPK.jl
 =========================
+**NOTE: This repo is discontinued. The code will be merged into GLPK.jl**
+
 
 [![Build Status](https://travis-ci.org/JuliaOpt/MathOptInterfaceGLPK.jl.svg?branch=master)](https://travis-ci.org/JuliaOpt/MathOptInterfaceGLPK.jl)
 
